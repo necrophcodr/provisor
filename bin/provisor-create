@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+exec 200>"/dev/shm/make_user.flock"
+flock -x 200
+
 trap cleanup EXIT
 
 # Maybe flocking this script will help prevent some racing
@@ -10,8 +13,7 @@ trap cleanup EXIT
 # 3. Set users quota
 
 THEUSER=$1
-KEYHEADER=$2
-KEYTEXT=$3
+KEYTEXT=$2
 ERROR=""
 
 TMPKEY=$(/bin/mktemp "/tmp/tmpkey.XXXXXXXX")
@@ -28,38 +30,35 @@ function cleanup
   fi
 }
 
-exec 200>"/dev/shm/make_user.flock"
-flock -x 200
-
-if [ "$#" -ne 3 ]; then
+if [ "$#" -ne 2 ]; then
   if [ -z "$1" ]; then echo "Error: Missing Username"; fi
-  if [ -z "$2" ]; then echo "Error: Missing Public Key Type"; fi
-  if [ -z "$3" ]; then echo "Error: Missing Public Key"; fi
+  if [ -z "$2" ]; then echo "Error: Missing Public Key"; fi
   exit 1
 fi
 
 ## Validate the given username
 if ! [[ ${THEUSER} =~ ^[a-zA-Z0-9_]{4,48}$ ]]; then
   echo "Invalid username" >&2
-  exit 1
-fi
-
-## Validate the given key
-if ! [[ ${KEYHEADER} =~ ^ssh-(rsa|dsa)$ ]]; then 
-  echo "Invalid key" >&2
-  exit 1
-fi
-
-if ! [[ ${KEYTEXT} =~ ^[a-zA-Z0-9+/=]{64,2048}$ ]]; then
-  echo "Invalid key">&2
-  exit 1
+  exit 2
 fi
 
 ## Dump the key file somewhere safe
-echo "${KEYHEADER} ${KEYTEXT}" >"${TMPKEY}"
+echo "${KEYTEXT}" >"${TMPKEY}"
+
+if [[ "${KEYTEXT:0:7}" != "ssh-rsa" || "${KEYTEXT:0:7}" != "ssh-dsa" ]]; then
+	echo "Invalid key!" >&2
+	exit 3
+fi
+
+ssh-keygen -l -f "${TMKKEY}"
+
+if [ $? -ne 0 ]; then
+	echo "Invalid key!" >&2
+	exit 1
+fi
 
 ## Determine if the user already exists.
-if [ -e "/home/${THEUSER}" ]; then
+if [ -d "/home/${THEUSER}" ]; then
   echo "This user already exists" >&2
   ERROR="no"
   exit 1

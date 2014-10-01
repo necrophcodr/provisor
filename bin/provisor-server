@@ -14,14 +14,22 @@ api = Api(app)
 
 # SSH Public Key Validator
 def pubkey(value):
+    # Value CANNOT include quotes, so we MAKE SURE there are no quotes around it yet.
+    value = value.replace( "\"", "" ).replace( "'", "" ).replace("\\\"", "" )
+    value = value.split( ' ' )
+    if value[0] != "ssh-rsa" and value[0] != "ssh-dsa":
+        raise ValueError( "Public Key Is Invalid" )
     try:
-        base64.decodestring(bytes(value,'utf8'))
+        base64.decodestring(bytes(value[1],'utf8'))
     except TypeError:
         raise ValueError("Public Key Is Invalid")
     except:
         raise ValueError('Public Key Is Invalid')
 
-    return value
+    # They key MUST have quotes around it when passed to a shell script, otherwise
+    # we'll get three parameters, and the shell script will have to validate
+    # and assemble the key itself.
+    return "\""+value[1]+value[2]+"\""
 
 # Username validator
 def username(value):
@@ -65,14 +73,6 @@ class UserCreate(Resource):
             required = True,
             location = 'json'
         )
-        self.reqparse.add_argument(
-            'keyType',
-            type = str,
-            required = True,
-            choices = ['ssh-rsa','ssh-dsa'],
-            help = "No valid keyType provided",
-            location = 'json'
-        )
         super(UserCreate, self).__init__()
         
     def post(self):
@@ -82,15 +82,20 @@ class UserCreate(Resource):
                 [ 'sudo',
                   '%s/bin/provisor-create' % os.getcwd(),
                   args['user'],
-                  args['keyType'],
                   args['key']
                 ],
                 timeout=5
             )
         except TimeoutExpired:
             return {'message': 'User creation script timed out'}
-        except CalledProcessError:
-            return {'message': 'User creation script failed'}
+        except CalledProcessError as e:
+            if e.returncode == 1:
+                return {'message': 'User creation script failed'}
+            elif e.returncode == 2:
+                return {'message': 'Username error/already taken'}
+            elif e.returncode == 3:
+                return {'message': 'Invalid key provided!'}
+
        
         return {'message': 'success'}
 
